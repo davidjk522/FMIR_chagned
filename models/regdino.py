@@ -44,7 +44,7 @@ class dispWarp(nn.Module):
 
         return flow
 
-    def forward(self,x,y,transformer,up_flow,integrate,upscale):
+    def forward(self,x,y,transformer,up_flow,integrate,upscale,need_up_flow=True):
 
         if up_flow is not None:
             #print(x.shape, up_flow.shape)
@@ -60,14 +60,24 @@ class dispWarp(nn.Module):
             #flow = flow + up_flow
             flow = flow + transformer(up_flow, flow)
 
-        #up_flow = self.up_tri(flow) * 2
-        #up_flow = self.up_tri(flow) 
-        up_flow = torch.nn.Upsample(scale_factor=(upscale[0],upscale[1],upscale[2]), mode='trilinear', align_corners=True)(flow)
-        #print(up_flow.shape,torch.tensor((2,2,1)).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).repeat((up_flow.shape[0], 1, up_flow.shape[2], up_flow.shape[3], up_flow.shape[4])).shape)
-        #input()
-        #up_flow = up_flow * torch.tensor((2,2,1)).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).repeat((up_flow.shape[0], 1, up_flow.shape[2], up_flow.shape[3], up_flow.shape[4])).cuda()
-        #print(upscale, torch.tensor(upscale).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).repeat((up_flow.shape[0], 1, up_flow.shape[2], up_flow.shape[3], up_flow.shape[4])))
-        up_flow = up_flow * torch.tensor(upscale).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).repeat((up_flow.shape[0], 1, up_flow.shape[2], up_flow.shape[3], up_flow.shape[4])).cuda()
+        # The caller only needs `up_flow` to hand off to the NEXT (finer)
+        # pyramid level -- for the finest level itself (regdino_mlp passes
+        # need_up_flow=False for disp_warp_0) it's immediately discarded by
+        # the caller. Upsampling `flow` to (upscale)x its own resolution is
+        # already the single biggest tensor in this module at native OASIS
+        # resolution (~160x224x192 -> ~320x448x384), so skip computing it
+        # entirely when nobody will use it, instead of allocating a
+        # multi-GB result just to throw it away.
+        if need_up_flow:
+            up_flow = torch.nn.Upsample(scale_factor=(upscale[0],upscale[1],upscale[2]), mode='trilinear', align_corners=True)(flow)
+            # NOTE: was `... .repeat((B,1,H,W,D)).cuda()` then elementwise-multiplied,
+            # which materializes a full (B,3,H,W,D) copy of `upscale` just to do a
+            # per-channel scalar multiply. `.view(1,-1,1,1,1)` broadcasts instead --
+            # identical result, no extra full-size tensor.
+            scale = torch.as_tensor(upscale, dtype=up_flow.dtype, device=up_flow.device).view(1, -1, 1, 1, 1)
+            up_flow = up_flow * scale
+        else:
+            up_flow = None
 
         return preint_flow, flow, up_flow
 
@@ -208,7 +218,10 @@ class regdino_mlp(nn.Module):
         
         int_flow_2, pos_flow_2, up_flow_2 = self.disp_warp_2(x_2,y_2,transformers[2],up_flow_3,integrates[2],upscale)
         int_flow_1, pos_flow_1, up_flow_1 = self.disp_warp_1(x_1,y_1,transformers[1],up_flow_2,integrates[1],upscale)
-        int_flow_0, pos_flow_0, _ = self.disp_warp_0(x_0,y_0,transformers[0],up_flow_1,integrates[0],upscale)
+        # need_up_flow=False: this is the finest pyramid level, its up_flow
+        # output is discarded (`_`) below anyway -- skip the multi-GB
+        # Upsample+scale computation that would otherwise be thrown away.
+        int_flow_0, pos_flow_0, _ = self.disp_warp_0(x_0,y_0,transformers[0],up_flow_1,integrates[0],upscale,need_up_flow=False)
 
         int_flows = [int_flow_0, int_flow_1, int_flow_2, int_flow_3, int_flow_4]
         pos_flows = [pos_flow_0, pos_flow_1, pos_flow_2, pos_flow_3, pos_flow_4]
