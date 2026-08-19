@@ -23,7 +23,7 @@ __pycache__/
 # train_registration_oasis.py's torch.hub backbone loading). Vendoring a
 # full clone (with its own .git/) creates a broken nested-repo entry in
 # git — re-clone via setup instructions instead of committing it.
-/third_party/
+#/third_party/
 
 # Training outputs
 /logs/
