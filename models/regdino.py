@@ -4,8 +4,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from models.backbones.voxelmorph.torch import layers
 from models.backbones.layers import encoder
-from transformers import AutoImageProcessor, AutoModel, Dinov2Config, AutoConfig
 from einops import repeat, rearrange
+# NOTE: this file originally also imported AutoImageProcessor, AutoModel,
+# Dinov2Config, AutoConfig from `transformers` at module level, but none of
+# them are actually referenced anywhere below (dead import) -- the DINO
+# backbone is loaded and driven separately, in train_registration_oasis.py.
+# Removed so this module (and the regdino_mlp class it defines) doesn't
+# require the `transformers` package to be installed just to import.
 
 from torchvision import transforms
 transform_image = transforms.Compose([
@@ -132,12 +137,15 @@ class DPTHead(nn.Module):
 
 class regdino_mlp(nn.Module):
 
-    def __init__(self, 
+    def __init__(self,
         img_size='(128,128,16)', # (128,128,16) for ACDC
         start_channel='8',
         lk_size= '3',
         cv_ks = '1',
         is_int = '1',
+        dino_channels = '256', # NEW: was hardcoded as 257 (=1 image + 256 DINO feature
+                                # channels). Made configurable so callers can trade DINO
+                                # feature resolution for memory (e.g. dino_channels=64).
         #up_scale = '(2,2,1)'
     ):
         super(regdino_mlp, self).__init__()
@@ -147,12 +155,13 @@ class regdino_mlp(nn.Module):
         self.lk_size = int(lk_size)
         self.cv_ks = int(cv_ks)
         self.is_int = int(is_int)
+        self.dino_channels = int(dino_channels)
 
-        print("img_size: {}, start_channel: {}, lk_size: {}, cv_ks: {}, is_int: {}".format(self.img_size, self.start_channel, self.lk_size, self.cv_ks, self.is_int))
+        print("img_size: {}, start_channel: {}, lk_size: {}, cv_ks: {}, is_int: {}, dino_channels: {}".format(self.img_size, self.start_channel, self.lk_size, self.cv_ks, self.is_int, self.dino_channels))
 
         N_s = self.start_channel
         self.simple_encoder = nn.Sequential(
-            encoder(257,N_s,3,1,1),
+            encoder(1 + self.dino_channels,N_s,3,1,1),
             encoder(N_s,2*N_s,3,1,1),
             encoder(2*N_s,N_s,3,1,1),
         )

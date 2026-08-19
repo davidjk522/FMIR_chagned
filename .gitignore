@@ -1,0 +1,33 @@
+# Byte-compiled Python files
+__pycache__/
+*.py[cod]
+
+# OASIS dataset (Learn2Reg task, ~3.3GB) — too large for git.
+# See OASIS/README.txt / OASIS_dataset.json for provenance; re-download
+# from the Learn2Reg challenge instead of committing it.
+/OASIS/
+
+# Convenience symlink (-> /OASIS) used by the default
+# `--datasets_path .` in train_registration_oasis.py. Keep this ignored
+# too since it only makes sense once /OASIS/ exists locally.
+/oasisreg
+
+# Pretrained backbone weights — download separately (see README), too
+# large for git and often license-gated (DINOv3, SAM, ...).
+/weight/*.pth
+/weight/*.safetensors
+/weight/*.bin
+!/weight/.keep
+
+# Externally cloned repos (e.g. facebookresearch/dinov3 for
+# train_registration_oasis.py's torch.hub backbone loading). Vendoring a
+# full clone (with its own .git/) creates a broken nested-repo entry in
+# git — re-clone via setup instructions instead of committing it.
+/third_party/
+
+# Training outputs
+/logs/
+*.npz
+
+# OS / editor cruft
+.DS_Store

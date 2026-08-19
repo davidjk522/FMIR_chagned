@@ -1,51 +1,73 @@
 import re
 import os
 import glob
+import warnings
+import importlib
 import torch
 import numpy as np
 
 from torch.utils.data import DataLoader
 
 from models import getModel
-from loaders.acdcreg_loader import acdcreg_loader
-from loaders.abdomenreg_loader import abdomenreg_loader
-from loaders.lungreg_loader import lungreg_loader
-from loaders.oasis_pkl_loader import oasis_pkl_loader
-from loaders.oasis_2d_loader import oasis_2d_loader 
-from loaders.ixi_pkl_loader import ixi_pkl_loader
-from loaders.thoraxreg_loader import thoraxreg_loader
-from loaders.thoraxregvalonly_loader import thoraxregvalonly_loader
-from loaders.abdomenorireg_loader import abdomenorireg_loader
-from loaders.mmreg_loader import mmreg_loader
 from utils.functions import modelSaver, convert_state_dict, dice_binary
+
+
+def _try_import_loader(module_path, attr):
+    # NOTE: several loader modules referenced below (lungreg_loader,
+    # oasis_2d_loader, ixi_pkl_loader, thoraxreg_loader,
+    # thoraxregvalonly_loader, mmreg_loader) are not present in the public
+    # FMIR GitHub repo. They're imported lazily/optionally here so that
+    # datasets which ARE available (acdcreg, abdomenreg, abdomenorireg,
+    # oasisreg via the hand-written loaders/oasis_pkl_loader.py) still work.
+    try:
+        module = importlib.import_module(module_path)
+        return getattr(module, attr)
+    except ImportError as e:
+        warnings.warn("----->>>> Skipping unavailable loader '%s.%s' (%s)" % (module_path, attr, e))
+        return None
+
+
+acdcreg_loader = _try_import_loader('loaders.acdcreg_loader', 'acdcreg_loader')
+abdomenreg_loader = _try_import_loader('loaders.abdomenreg_loader', 'abdomenreg_loader')
+lungreg_loader = _try_import_loader('loaders.lungreg_loader', 'lungreg_loader')
+oasis_pkl_loader = _try_import_loader('loaders.oasis_pkl_loader', 'oasis_pkl_loader')
+oasis_2d_loader = _try_import_loader('loaders.oasis_2d_loader', 'oasis_2d_loader')
+ixi_pkl_loader = _try_import_loader('loaders.ixi_pkl_loader', 'ixi_pkl_loader')
+thoraxreg_loader = _try_import_loader('loaders.thoraxreg_loader', 'thoraxreg_loader')
+thoraxregvalonly_loader = _try_import_loader('loaders.thoraxregvalonly_loader', 'thoraxregvalonly_loader')
+abdomenorireg_loader = _try_import_loader('loaders.abdomenorireg_loader', 'abdomenorireg_loader')
+mmreg_loader = _try_import_loader('loaders.mmreg_loader', 'mmreg_loader')
 
 def loadDataset(opt, split = 'train'):
 
     dataset_name = opt['dataset']
     data_path = opt['data_path']
 
-    if dataset_name == 'acdcreg':
-        loader = acdcreg_loader(root_dir = data_path, split = split)
-    elif dataset_name == 'lungreg':
-        loader = lungreg_loader(root_dir = data_path, split = split)
-    elif dataset_name == 'mmreg':
-        loader = mmreg_loader(root_dir = data_path, split = split)
-    elif dataset_name == 'oasisreg':
-        loader = oasis_pkl_loader(root_dir = data_path, split = split)
-    elif dataset_name == 'oasis_2d':
-        loader = oasis_2d_loader(root_dir = data_path, split = split)
-    elif dataset_name == 'ixireg':
-        loader = ixi_pkl_loader(root_dir = data_path, split = split)
-    elif dataset_name == 'abdomenreg':
-        loader = abdomenreg_loader(root_dir = data_path, split = split)
-    elif dataset_name == 'thoraxreg':
-        loader = thoraxreg_loader(root_dir = data_path, split = split)
-    elif dataset_name == 'thoraxregvalonly':
-        loader = thoraxregvalonly_loader(root_dir = data_path, split = split)
-    elif dataset_name == 'abdomenorireg':
-        loader = abdomenorireg_loader(root_dir = data_path, split = split)
-    else:
+    loader_cls = {
+        'acdcreg': acdcreg_loader,
+        'lungreg': lungreg_loader,
+        'mmreg': mmreg_loader,
+        'oasisreg': oasis_pkl_loader,
+        'oasis_2d': oasis_2d_loader,
+        'ixireg': ixi_pkl_loader,
+        'abdomenreg': abdomenreg_loader,
+        'thoraxreg': thoraxreg_loader,
+        'thoraxregvalonly': thoraxregvalonly_loader,
+        'abdomenorireg': abdomenorireg_loader,
+    }.get(dataset_name)
+
+    if loader_cls is None and dataset_name not in {
+        'acdcreg', 'lungreg', 'mmreg', 'oasisreg', 'oasis_2d', 'ixireg',
+        'abdomenreg', 'thoraxreg', 'thoraxregvalonly', 'abdomenorireg',
+    }:
         raise ValueError('Unkown datasets: please define proper dataset name')
+    if loader_cls is None:
+        raise ImportError(
+            "Dataset '%s' was requested but its loader module is missing "
+            "from this checkout of the repo (see the warning printed at "
+            "import time)." % dataset_name)
+
+    loader = loader_cls(root_dir = data_path, split = split)
 
     print("----->>>> %s dataset is loaded ..." % dataset_name)
 

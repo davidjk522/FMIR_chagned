@@ -8,7 +8,7 @@ import pandas as pd
 import torch.nn as nn
 from torch.nn import functional as F
 from collections import deque, OrderedDict
-from models.backbones.transmorph.surface_distance import compute_robust_hausdorff, compute_surface_distances
+from utils.surface_distance.metrics import compute_robust_hausdorff, compute_surface_distances
 
 def get_downsampled_images(img, n_downs=4, scale=0.5, mode='trilinear', n_cs=1):
 
