@@ -51,6 +51,26 @@ DINOv3 backbone loading -- IMPORTANT DIFFERENCE FROM train_registration_all.py:
   but only by coincidence; still use EMBED_DIM here, not a literal 768.
 """
 
+# NOTE: --gpu_id must be applied via CUDA_VISIBLE_DEVICES BEFORE `import torch`
+# and especially before the DINOv3 backbone's `.cuda()` call below (which
+# runs at module-import time, i.e. before argparse / setters.setGPU() even
+# run in __main__). Setting the env var later, the way setters.setGPU() does,
+# has no effect once CUDA has already picked a default device -- the whole
+# script (backbone AND registration model AND every other bare `.cuda()`
+# call) would silently run on physical GPU 0 regardless of --gpu_id. Do a
+# tiny manual pre-scan for --gpu_id here, ahead of any torch import, so the
+# real argparse parsing later stays the source of truth for everything else.
+import os
+import sys
+_gpu_id = '0'
+for _i, _a in enumerate(sys.argv):
+    if _a == '--gpu_id' and _i + 1 < len(sys.argv):
+        _gpu_id = sys.argv[_i + 1]
+    elif _a.startswith('--gpu_id='):
+        _gpu_id = _a.split('=', 1)[1]
+os.environ['CUDA_VISIBLE_DEVICES'] = _gpu_id
+del _gpu_id, _i, _a
+
 import time
 import random
 import argparse
