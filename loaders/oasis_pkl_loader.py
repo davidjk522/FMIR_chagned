@@ -31,6 +31,7 @@ a different split.
 
 import os
 import glob
+import tempfile
 import itertools
 
 import torch
@@ -100,8 +101,18 @@ class oasis_pkl_loader(Dataset):
     def _load_subject(self, idx):
         save_fp = self.save_fps[idx]
         if os.path.exists(save_fp):
-            data = np.load(save_fp)
-            return data['img'], data['lbl']
+            try:
+                data = np.load(save_fp)
+                return data['img'], data['lbl']
+            except Exception as e:
+                # A DataLoader worker (num_workers>0) can race another worker
+                # that's still mid-write on the same subject's cache the
+                # first time it's touched (np.savez() below wasn't atomic),
+                # leaving a corrupt/truncated .npz -- e.g. zipfile.BadZipFile.
+                # Recompute from the source .nii.gz instead of crashing the
+                # whole run; the atomic-rename write below prevents this
+                # from happening for any subject going forward.
+                print('----->>>> subject # %d cache at %s was corrupt (%s), recomputing' % (idx, save_fp, e))
 
         img = np.asarray(nib.load(self.img_fps[idx]).get_fdata(), dtype='float32')
         if self.lbl_fps is not None:
@@ -114,7 +125,20 @@ class oasis_pkl_loader(Dataset):
 
         img = img[None, ...]
         lbl = lbl[None, ...]
-        np.savez(save_fp, img=img, lbl=lbl)
+        # Write atomically: savez to a uniquely-named temp file, then
+        # os.replace() into place (atomic on POSIX). Without this, two
+        # DataLoader worker processes computing the same subject at the
+        # same time can both open/write save_fp concurrently and corrupt it
+        # -- this is exactly what produced the BadZipFile crash.
+        fd, tmp_fp = tempfile.mkstemp(dir=os.path.dirname(save_fp) or '.', suffix='.npz')
+        os.close(fd)
+        try:
+            np.savez(tmp_fp, img=img, lbl=lbl)
+            os.replace(tmp_fp, save_fp)
+        except BaseException:
+            if os.path.exists(tmp_fp):
+                os.remove(tmp_fp)
+            raise
         print('----->>>> subject # %d saved to %s' % (idx, save_fp))
         return img, lbl
 
