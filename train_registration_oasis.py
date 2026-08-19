@@ -24,25 +24,31 @@ Known gaps / assumptions carried over or introduced here, please review:
     describes ACDC/Abdomen in detail).
 
 DINOv3 backbone loading -- IMPORTANT DIFFERENCE FROM train_registration_all.py:
-  The weight file actually shipped in ./weight/ is
-  dinov3_vits16_pretrain_lvd1689m-08c60483.pth, Meta's ORIGINAL dinov3
-  GitHub checkpoint format (verified: the "08c60483" hash matches
-  dinov3_vits16's official hash exactly), NOT a HuggingFace `transformers`
-  snapshot. `AutoModel.from_pretrained(...)` (what train_registration_all.py
-  uses) cannot load this file at all -- the state_dict key names don't
-  match HF's Dinov3 module structure.
+  Weight file: dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth (ViT-B/16,
+  embed_dim=768) -- NOT shipped in this repo, place it at DINOV3_WEIGHTS
+  yourself (see the note next to that constant below; the file is
+  license-gated on Meta's servers). This is Meta's ORIGINAL dinov3
+  GitHub checkpoint format (verified: the "73cec8be" hash matches
+  dinov3_vitb16's official hash exactly in
+  third_party/dinov3/dinov3/hub/backbones.py), NOT a HuggingFace
+  `transformers` snapshot. `AutoModel.from_pretrained(...)` (what
+  train_registration_all.py uses) cannot load this file at all -- the
+  state_dict key names don't match HF's Dinov3 module structure.
   This script instead loads it via `torch.hub` against a local clone of
   https://github.com/facebookresearch/dinov3 (see ./third_party/dinov3/),
   using the model's native `get_intermediate_layers(..., reshape=True)`
-  API, which was verified end-to-end on this machine (state_dict loads
-  with strict=True, dummy forward pass produces the expected
-  (1, 384, 14, 14) patch feature map for a 224x224 input).
-  Also note: dinov3_vits16's embedding dim is 384, NOT 768 -- the
-  original train_registration_all.py hardcodes 768 in a few places
-  (apply_pca_to_3d_features_torch, the train-time channel dropout
-  `random.sample(range(768), 256)`), which would silently break with
-  this checkpoint. This script uses the backbone's real embed_dim
-  throughout instead of a hardcoded constant.
+  API. (Earlier iteration used vits16/embed_dim=384 and this exact
+  end-to-end path -- state_dict loading with strict=True, dummy forward
+  producing the expected patch feature map -- was verified on this
+  machine then; vitb16 uses the identical loading code path, just a
+  bigger checkpoint, embed_dim=768.)
+  This script reads EMBED_DIM off the loaded backbone (`backbone.embed_dim`)
+  rather than hardcoding it, unlike train_registration_all.py which
+  hardcodes 768 in a few places (apply_pca_to_3d_features_torch, the
+  train-time channel dropout `random.sample(range(768), 256)`) --
+  those would have silently been WRONG when this file used vits16
+  (384-dim), and now happen to be numerically correct again for vitb16,
+  but only by coincidence; still use EMBED_DIM here, not a literal 768.
 """
 
 import time
@@ -83,12 +89,24 @@ transform_image = transforms.Compose([
 
 ###########dino backbone (frozen), loaded via torch.hub from a local clone
 DINOV3_REPO_DIR = './third_party/dinov3'
-DINOV3_WEIGHTS = './weight/dinov3_vits16_pretrain_lvd1689m-08c60483.pth'
+DINOV3_MODEL_NAME = 'dinov3_vitb16'
+DINOV3_WEIGHTS = './weight/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth'
 DINOV3_LAYER_IDX = [2, 5, 8, 11]  # unused for now; embed_oasis() only reads the last block, see note below
 
-backbone = torch.hub.load(DINOV3_REPO_DIR, 'dinov3_vits16', source='local', weights=DINOV3_WEIGHTS).cuda()
+# NOTE: switched from vits16 (embed_dim=384) to vitb16 (embed_dim=768) --
+# hash '73cec8be' verified against third_party/dinov3/dinov3/hub/backbones.py's
+# dinov3_vitb16() entrypoint, so this IS the correct file for this model name
+# (not a mismatch like the original vits16 vs 768-hardcoded bug from before).
+# The weight file itself is NOT included in this repo/checkout -- place it at
+# DINOV3_WEIGHTS yourself (it's gated behind Meta's license, dl.fbaipublicfiles.com
+# 403s without a signed URL). EMBED_DIM below is read off the model, so nothing
+# else needs to change for the larger embedding size -- but note vitb16 is 2x
+# vits16's channels per patch token, so embed_oasis_lowres()'s backbone-forward
+# memory footprint (not the already-fixed upsample step) will roughly double;
+# re-check GPU headroom / --dino_channels if you hit OOM again.
+backbone = torch.hub.load(DINOV3_REPO_DIR, DINOV3_MODEL_NAME, source='local', weights=DINOV3_WEIGHTS).cuda()
 backbone.eval()
-EMBED_DIM = backbone.embed_dim  # 384 for vits16 -- do NOT hardcode 768 here
+EMBED_DIM = backbone.embed_dim  # 768 for vitb16
 for p in backbone.parameters():
     p.requires_grad = False
 ###########
